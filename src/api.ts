@@ -1,7 +1,9 @@
 import { Doc, AccessCode, SiteSettings, DashboardStats } from './types'
 
 const ADMIN_TOKEN_KEY = 'kp_admin_token'
-const VIP_TOKEN_KEY = 'kp_vip_token'
+const GLOBAL_VIP_TOKEN_KEY = 'kp_global_vip_token'
+const DOC_VIP_TOKENS_KEY = 'kp_doc_vip_tokens'
+const VIP_LABEL_KEY = 'kp_vip_user_label'
 
 export function getAdminToken(): string | null {
   return localStorage.getItem(ADMIN_TOKEN_KEY)
@@ -15,19 +17,79 @@ export function removeAdminToken() {
   localStorage.removeItem(ADMIN_TOKEN_KEY)
 }
 
-export function getVipToken(): string | null {
-  return localStorage.getItem(VIP_TOKEN_KEY)
+// Global & Per-Doc VIP Token Management
+export function getGlobalVipToken(): string | null {
+  return localStorage.getItem(GLOBAL_VIP_TOKEN_KEY)
 }
 
-export function setVipToken(token: string) {
-  localStorage.setItem(VIP_TOKEN_KEY, token)
+export function getDocTokensMap(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(DOC_VIP_TOKENS_KEY)
+    return raw ? JSON.parse(raw) : {}
+  } catch {
+    return {}
+  }
 }
 
-export function removeVipToken() {
-  localStorage.removeItem(VIP_TOKEN_KEY)
+export function getVipToken(docId?: string | null): string | null {
+  const globalToken = getGlobalVipToken()
+  if (globalToken) return globalToken
+
+  if (docId) {
+    const docTokens = getDocTokensMap()
+    if (docTokens[docId]) return docTokens[docId]
+  }
+
+  // Fallback to any token
+  const docTokens = getDocTokensMap()
+  const firstDocToken = Object.values(docTokens)[0]
+  return firstDocToken || null
 }
 
-async function request<T = any>(endpoint: string, options: RequestInit = {}): Promise<T> {
+export function saveVipToken(token: string, options: { canAccessAll?: boolean; docId?: string | null; label?: string }) {
+  if (options.label) {
+    localStorage.setItem(VIP_LABEL_KEY, options.label)
+  }
+
+  if (options.canAccessAll) {
+    localStorage.setItem(GLOBAL_VIP_TOKEN_KEY, token)
+  }
+
+  if (options.docId) {
+    const map = getDocTokensMap()
+    map[options.docId] = token
+    localStorage.setItem(DOC_VIP_TOKENS_KEY, JSON.stringify(map))
+  }
+}
+
+export function hasVipAccessToDoc(docId: string): boolean {
+  if (getGlobalVipToken()) return true
+  const map = getDocTokensMap()
+  return !!map[docId]
+}
+
+export function isAnyVipActive(): boolean {
+  if (getGlobalVipToken()) return true
+  const map = getDocTokensMap()
+  return Object.keys(map).length > 0
+}
+
+export function getVipUserLabel(): string {
+  return localStorage.getItem(VIP_LABEL_KEY) || 'VIP学员'
+}
+
+export function clearAllVipTokens() {
+  localStorage.removeItem(GLOBAL_VIP_TOKEN_KEY)
+  localStorage.removeItem(DOC_VIP_TOKENS_KEY)
+  localStorage.removeItem(VIP_LABEL_KEY)
+  localStorage.removeItem('kp_vip_token') // legacy clean
+}
+
+// Legacy alias
+export const getVipTokenLegacy = getVipToken
+export const removeVipToken = clearAllVipTokens
+
+async function request<T = any>(endpoint: string, options: RequestInit = {}, docId?: string | null): Promise<T> {
   const headers = new Headers(options.headers || {})
 
   const adminToken = getAdminToken()
@@ -35,7 +97,7 @@ async function request<T = any>(endpoint: string, options: RequestInit = {}): Pr
     headers.set('Authorization', `Bearer ${adminToken}`)
   }
 
-  const vipToken = getVipToken()
+  const vipToken = getVipToken(docId)
   if (vipToken) {
     headers.set('X-Access-Token', vipToken)
   }
@@ -109,7 +171,7 @@ export const api = {
 
   async getDoc(id: string, key?: string | null): Promise<Doc> {
     const query = key ? `?key=${encodeURIComponent(key)}` : ''
-    return await request<Doc>(`/api/docs/${id}${query}`)
+    return await request<Doc>(`/api/docs/${id}${query}`, {}, id)
   },
 
   async createDoc(doc: Partial<Doc>): Promise<{ success: boolean; id: string }> {
@@ -132,14 +194,35 @@ export const api = {
     })
   },
 
-  // Passcode & VIP verification
-  async verifyPasscode(code: string, docId?: string): Promise<{ success: boolean; token: string; label?: string; message?: string }> {
-    const res = await request<{ success: boolean; token: string; label?: string; message?: string }>('/api/access/verify', {
+  // Passcode & VIP verification (supports both single doc and all docs!)
+  async verifyPasscode(code: string, docId?: string | null): Promise<{
+    success: boolean
+    token: string
+    label?: string
+    canAccessAll?: boolean
+    docId?: string | null
+    docTitle?: string | null
+    message?: string
+  }> {
+    const res = await request<{
+      success: boolean
+      token: string
+      label?: string
+      canAccessAll?: boolean
+      docId?: string | null
+      docTitle?: string | null
+      message?: string
+    }>('/api/access/verify', {
       method: 'POST',
       body: JSON.stringify({ code, docId }),
     })
+
     if (res.token) {
-      setVipToken(res.token)
+      saveVipToken(res.token, {
+        canAccessAll: res.canAccessAll,
+        docId: res.docId,
+        label: res.label,
+      })
     }
     return res
   },

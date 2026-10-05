@@ -239,6 +239,7 @@ export const DocReaderPage: React.FC<DocReaderPageProps> = ({ settings }) => {
         isOpen={showPasscodeModal}
         onClose={() => setShowPasscodeModal(false)}
         settings={settings}
+        currentDocId={doc?.id}
         onSuccess={() => {
           loadDocument()
         }}

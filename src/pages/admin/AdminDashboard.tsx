@@ -558,12 +558,12 @@ export const AdminDashboard: React.FC = () => {
 
                           <td className="py-4 px-4 text-xs">
                             {item.doc_id ? (
-                              <span className="text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 truncate max-w-[160px] inline-block" title={item.doc_title || item.doc_id}>
-                                仅: {item.doc_title || '特定文档'}
+                              <span className="inline-flex items-center gap-1 text-blue-700 bg-blue-50 px-2.5 py-1 rounded-full border border-blue-200 font-medium max-w-[200px] truncate" title={item.doc_title || item.doc_id}>
+                                <span>📄 单篇: 《{item.doc_title || '特定文档'}》</span>
                               </span>
                             ) : (
-                              <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                                全专栏通用VIP
+                              <span className="inline-flex items-center gap-1 text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200 font-medium">
+                                <span>🌟 全专栏所有文档</span>
                               </span>
                             )}
                           </td>
@@ -862,20 +862,64 @@ export const AdminDashboard: React.FC = () => {
                 />
               </div>
 
+              {/* Permission Scope Selector */}
               <div>
-                <label className="block text-xs font-semibold text-[#646a73] mb-1.5">
-                  授权适用范围
+                <label className="block text-xs font-semibold text-[#646a73] mb-2">
+                  权限授权范围 (单篇文档 或 所有文档)
                 </label>
-                <select
-                  value={codeForm.doc_id}
-                  onChange={(e) => setCodeForm({ ...codeForm, doc_id: e.target.value })}
-                  className="w-full px-3.5 py-2.5 bg-[#f5f6f7] border border-[#dee0e3] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-feishu-500 focus:bg-white"
-                >
-                  <option value="">🌟 全站通用VIP (可解锁所有专栏付费文档)</option>
-                  {docs.map(d => (
-                    <option key={d.id} value={d.id}>📄 仅限定: {d.title}</option>
-                  ))}
-                </select>
+                <div className="grid grid-cols-2 gap-2 mb-2">
+                  <button
+                    type="button"
+                    onClick={() => setCodeForm({ ...codeForm, doc_id: '' })}
+                    className={`p-2.5 rounded-xl border text-left transition-all ${
+                      codeForm.doc_id === ''
+                        ? 'bg-emerald-50 border-emerald-300 text-emerald-900 ring-2 ring-emerald-500/20'
+                        : 'bg-[#f9f9fa] border-gray-200 text-gray-700 hover:bg-gray-100'
+                    }`}
+                  >
+                    <div className="font-semibold text-xs flex items-center gap-1.5">
+                      <span>🌟 全专栏通用</span>
+                    </div>
+                    <div className="text-[11px] text-[#8f959e] mt-0.5">解锁所有付费文档</div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!codeForm.doc_id && docs.length > 0) {
+                        setCodeForm({ ...codeForm, doc_id: docs[0].id })
+                      }
+                    }}
+                    className={`p-2.5 rounded-xl border text-left transition-all ${
+                      codeForm.doc_id !== ''
+                        ? 'bg-blue-50 border-blue-300 text-blue-900 ring-2 ring-blue-500/20'
+                        : 'bg-[#f9f9fa] border-gray-200 text-gray-700 hover:bg-gray-100'
+                    }`}
+                  >
+                    <div className="font-semibold text-xs flex items-center gap-1.5">
+                      <span>📄 单一文档专属</span>
+                    </div>
+                    <div className="text-[11px] text-[#8f959e] mt-0.5">仅限指定单篇文档</div>
+                  </button>
+                </div>
+
+                {/* If single doc selected, show doc dropdown */}
+                {codeForm.doc_id !== '' && (
+                  <div className="mt-2.5 bg-blue-50/50 p-3 rounded-xl border border-blue-200">
+                    <label className="block text-[11px] font-semibold text-blue-900 mb-1.5">
+                      请选择要授权的单一文档：
+                    </label>
+                    <select
+                      value={codeForm.doc_id}
+                      onChange={(e) => setCodeForm({ ...codeForm, doc_id: e.target.value })}
+                      className="w-full px-3 py-2 bg-white border border-blue-300 rounded-lg text-xs font-medium focus:outline-none focus:ring-2 focus:ring-feishu-500"
+                    >
+                      {docs.map(d => (
+                        <option key={d.id} value={d.id}>📄 {d.title}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-3">

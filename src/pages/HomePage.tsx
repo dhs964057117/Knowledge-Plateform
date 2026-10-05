@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { Search, Lock, BookOpen, Clock, Eye, Sparkles, User, ChevronRight, ShieldCheck, KeyRound } from 'lucide-react'
-import { api, getVipToken } from '../api'
+import { api, getVipToken, hasVipAccessToDoc } from '../api'
 import { Doc, SiteSettings } from '../types'
 import { PasscodeActivationModal } from '../components/PasscodeActivationModal'
 
@@ -158,22 +158,42 @@ export const HomePage: React.FC<HomePageProps> = ({ settings }) => {
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                         loading="lazy"
                       />
-                      {doc.is_vip_only === 1 && (
-                        <div className="absolute top-3 right-3 bg-black/75 backdrop-blur-md text-amber-300 text-xs px-2.5 py-1 rounded-full flex items-center gap-1 font-medium shadow-sm">
-                          <Lock className="w-3 h-3" />
-                          <span>VIP 专属</span>
-                        </div>
-                      )}
+                      {doc.is_vip_only === 1 ? (
+                        hasVipAccessToDoc(doc.id) ? (
+                          <div className="absolute top-3 right-3 bg-emerald-600/90 backdrop-blur-md text-white text-xs px-2.5 py-1 rounded-full flex items-center gap-1 font-medium shadow-sm">
+                            <Sparkles className="w-3 h-3" />
+                            <span>已解锁</span>
+                          </div>
+                        ) : (
+                          <div className="absolute top-3 right-3 bg-black/75 backdrop-blur-md text-amber-300 text-xs px-2.5 py-1 rounded-full flex items-center gap-1 font-medium shadow-sm">
+                            <Lock className="w-3 h-3" />
+                            <span>VIP 专属</span>
+                          </div>
+                        )
+                      ) : null}
                     </div>
                   )}
 
                   <div className="p-5 sm:p-6">
                     {/* VIP badge if no cover */}
-                    {!doc.cover_image && doc.is_vip_only === 1 && (
-                      <div className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 mb-2.5">
-                        <Lock className="w-3 h-3 text-amber-600" />
-                        <span>VIP 专属密码解锁</span>
-                      </div>
+                    {!doc.cover_image && (
+                      doc.is_vip_only === 1 ? (
+                        hasVipAccessToDoc(doc.id) ? (
+                          <div className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 mb-2.5">
+                            <Sparkles className="w-3 h-3 text-emerald-600" />
+                            <span>已解锁阅读权限</span>
+                          </div>
+                        ) : (
+                          <div className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 mb-2.5">
+                            <Lock className="w-3 h-3 text-amber-600" />
+                            <span>VIP 专属密码解锁</span>
+                          </div>
+                        )
+                      ) : (
+                        <div className="inline-flex items-center gap-1 text-[11px] font-semibold text-gray-600 bg-gray-100 px-2 py-0.5 rounded mb-2.5">
+                          <span>免费开放</span>
+                        </div>
+                      )
                     )}
 
                     <h3 className="text-lg font-bold text-[#1f2329] group-hover:text-feishu-600 transition-colors line-clamp-2">

@@ -239,11 +239,14 @@ export function setupDevApiMiddleware() {
               return sendJson(403, { success: false, message: '密码使用次数已达上限' })
             }
             if (match.doc_id && docId && match.doc_id !== docId) {
-              return sendJson(403, { success: false, message: '该密码仅适用于特定文档' })
+              const boundDoc = db.docs.find(d => d.id === match.doc_id)
+              return sendJson(403, { success: false, message: `该密码仅适用于单篇文档《${boundDoc?.title || '指定文档'}》，无法解锁当前内容` })
             }
 
             match.usage_count = (match.usage_count || 0) + 1
             saveDB(db)
+
+            const boundDoc = match.doc_id ? db.docs.find(d => d.id === match.doc_id) : null
 
             const token = await createVipToken({
               codeId: match.id,
@@ -257,7 +260,9 @@ export function setupDevApiMiddleware() {
               token,
               label: match.label,
               canAccessAll: !match.doc_id,
-              message: '密码验证成功，欢迎阅读！'
+              docId: match.doc_id || null,
+              docTitle: boundDoc?.title || null,
+              message: match.doc_id ? `已解锁单篇文档: 《${boundDoc?.title || '指定文档'}》` : '已解锁全专栏所有付费文档！'
             })
           }
 

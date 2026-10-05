@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
-import { KeyRound, Sparkles, AlertCircle, CheckCircle2, MessageSquare, Copy, Check, X } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { KeyRound, Sparkles, AlertCircle, CheckCircle2, MessageSquare, Copy, Check, X, BookOpen, ArrowRight } from 'lucide-react'
 import { api } from '../api'
 import { SiteSettings } from '../types'
 
@@ -7,6 +8,7 @@ interface PasscodeActivationModalProps {
   isOpen: boolean
   onClose: () => void
   settings?: SiteSettings | null
+  currentDocId?: string | null
   onSuccess?: (label?: string) => void
 }
 
@@ -14,12 +16,19 @@ export const PasscodeActivationModal: React.FC<PasscodeActivationModalProps> = (
   isOpen,
   onClose,
   settings,
+  currentDocId,
   onSuccess,
 }) => {
   const [code, setCode] = useState('')
   const [loading, setLoading] = useState(false)
   const [errorMsg, setErrorMsg] = useState('')
-  const [successInfo, setSuccessInfo] = useState<string | null>(null)
+  const [successResult, setSuccessResult] = useState<{
+    label?: string
+    canAccessAll?: boolean
+    docId?: string | null
+    docTitle?: string | null
+    message?: string
+  } | null>(null)
   const [copied, setCopied] = useState(false)
 
   if (!isOpen) return null
@@ -33,17 +42,29 @@ export const PasscodeActivationModal: React.FC<PasscodeActivationModalProps> = (
 
     setLoading(true)
     setErrorMsg('')
-    setSuccessInfo(null)
+    setSuccessResult(null)
 
     try {
-      const res = await api.verifyPasscode(code.trim())
+      const res = await api.verifyPasscode(code.trim(), currentDocId)
       if (res.success && res.token) {
-        setSuccessInfo(res.label || '学员')
+        setSuccessResult({
+          label: res.label,
+          canAccessAll: res.canAccessAll,
+          docId: res.docId,
+          docTitle: res.docTitle,
+          message: res.message,
+        })
+
         setTimeout(() => {
           if (onSuccess) onSuccess(res.label)
-          onClose()
-          window.location.reload()
-        }, 1200)
+          // If already on the doc or all docs unlocked, reload after 1.5s
+          if (res.canAccessAll || (currentDocId && currentDocId === res.docId)) {
+            setTimeout(() => {
+              onClose()
+              window.location.reload()
+            }, 800)
+          }
+        }, 1000)
       } else {
         setErrorMsg(res.message || '卡密无效或已被停用')
       }
@@ -84,19 +105,44 @@ export const PasscodeActivationModal: React.FC<PasscodeActivationModalProps> = (
               专属卡密激活
             </h3>
             <p className="mt-1 text-xs text-[#646a73]">
-              输入主理人为您分配的专属密码，激活VIP阅读权限
+              支持<strong>单篇文档专属密码</strong>与<strong>全专栏通用密码</strong>
             </p>
           </div>
 
           {/* Form */}
-          {successInfo ? (
-            <div className="py-6 text-center space-y-2">
-              <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-2">
+          {successResult ? (
+            <div className="py-4 text-center space-y-3">
+              <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mx-auto">
                 <CheckCircle2 className="w-7 h-7" />
               </div>
               <p className="text-base font-bold text-gray-900">卡密验证成功！</p>
-              <p className="text-xs text-gray-500">已授权学员身份: <strong className="text-emerald-700">{successInfo}</strong></p>
-              <p className="text-xs text-feishu-600 animate-pulse pt-2">正在载入专栏权限...</p>
+              
+              <div className="bg-emerald-50/70 border border-emerald-200 rounded-xl p-3 text-xs text-emerald-800 space-y-1">
+                {successResult.label && (
+                  <p>学员姓名/备注: <strong>{successResult.label}</strong></p>
+                )}
+                {successResult.canAccessAll ? (
+                  <p className="font-semibold text-emerald-900">🌟 权限范围：已解锁全专栏所有付费文档</p>
+                ) : (
+                  <p className="font-semibold text-emerald-900">
+                    📄 权限范围：单篇专享 《{successResult.docTitle || '指定文档'}》
+                  </p>
+                )}
+              </div>
+
+              {/* If single doc and not currently on that doc, provide button to navigate directly */}
+              {!successResult.canAccessAll && successResult.docId && currentDocId !== successResult.docId && (
+                <div className="pt-2">
+                  <Link
+                    to={`/doc/${successResult.docId}`}
+                    onClick={onClose}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-feishu-600 text-white rounded-xl text-xs font-semibold hover:bg-feishu-700 transition-colors shadow-xs"
+                  >
+                    <span>立即前往阅读该文档</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </Link>
+                </div>
+              )}
             </div>
           ) : (
             <form onSubmit={handleVerify} className="space-y-4">
@@ -115,7 +161,7 @@ export const PasscodeActivationModal: React.FC<PasscodeActivationModalProps> = (
               </div>
 
               {errorMsg && (
-                <div className="flex items-center gap-2 text-rose-600 text-xs bg-rose-50 border border-rose-200 px-3 py-2 rounded-lg">
+                <div className="flex items-center gap-2 text-rose-600 text-xs bg-rose-50 border border-rose-200 px-3 py-2 rounded-lg text-left">
                   <AlertCircle className="w-4 h-4 flex-shrink-0" />
                   <span>{errorMsg}</span>
                 </div>

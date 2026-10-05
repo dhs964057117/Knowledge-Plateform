@@ -170,7 +170,8 @@ app.post('/access/verify', async (c) => {
 
   // Check doc binding: if doc_id is specified, must match requested doc
   if (row.doc_id && docId && row.doc_id !== docId) {
-    return c.json({ success: false, message: '该密码仅适用于指定文档，无法解锁当前内容' }, 403)
+    const boundDoc = await db.prepare('SELECT title FROM docs WHERE id = ?').bind(row.doc_id).first<{ title: string }>()
+    return c.json({ success: false, message: `该密码仅适用于单篇文档《${boundDoc?.title || '指定文档'}》，无法解锁当前内容` }, 403)
   }
 
   // Valid! Increment usage count
@@ -181,8 +182,14 @@ app.post('/access/verify', async (c) => {
   const clientIp = c.req.header('cf-connecting-ip') || c.req.header('x-real-ip') || 'unknown'
   const userAgent = c.req.header('user-agent') || 'unknown'
   await db.prepare('INSERT INTO access_logs (id, code_id, doc_id, ip, user_agent) VALUES (?, ?, ?, ?, ?)')
-    .bind(logId, row.id, docId, clientIp, userAgent)
+    .bind(logId, row.id, docId || row.doc_id, clientIp, userAgent)
     .run()
+
+  let docTitle = null
+  if (row.doc_id) {
+    const boundDoc = await db.prepare('SELECT title FROM docs WHERE id = ?').bind(row.doc_id).first<{ title: string }>()
+    docTitle = boundDoc?.title || null
+  }
 
   const token = await createVipToken({
     codeId: row.id,
@@ -196,7 +203,9 @@ app.post('/access/verify', async (c) => {
     token,
     label: row.label,
     canAccessAll: !row.doc_id,
-    message: '密码验证成功，欢迎阅读！'
+    docId: row.doc_id || null,
+    docTitle,
+    message: row.doc_id ? `已解锁单篇文档: 《${docTitle || '指定文档'}》` : '已解锁全专栏所有付费文档！'
   })
 })
 
