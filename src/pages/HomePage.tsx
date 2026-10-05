@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { Search, Lock, BookOpen, Clock, Eye, Sparkles, User, ChevronRight, ShieldCheck, ArrowRight } from 'lucide-react'
+import { Search, Lock, BookOpen, Clock, Eye, Sparkles, User, ChevronRight, ShieldCheck, KeyRound } from 'lucide-react'
 import { api, getVipToken } from '../api'
 import { Doc, SiteSettings } from '../types'
+import { PasscodeActivationModal } from '../components/PasscodeActivationModal'
 
 interface HomePageProps {
   settings?: SiteSettings | null
@@ -13,6 +14,7 @@ export const HomePage: React.FC<HomePageProps> = ({ settings }) => {
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
   const [isVip, setIsVip] = useState(false)
+  const [showPasscodeModal, setShowPasscodeModal] = useState(false)
 
   useEffect(() => {
     setIsVip(!!getVipToken())
@@ -44,7 +46,7 @@ export const HomePage: React.FC<HomePageProps> = ({ settings }) => {
           
           <div className="inline-flex items-center gap-2 px-3 py-1 bg-feishu-50 border border-feishu-200 rounded-full text-xs font-medium text-feishu-600 mb-5 shadow-xs">
             <Sparkles className="w-3.5 h-3.5 text-feishu-500" />
-            <span>飞书风格知识付费 · 一人一密专属专栏</span>
+            <span>飞书风格知识专栏 · 一人一密专属授权</span>
           </div>
 
           <h1 className="text-3xl sm:text-5xl font-extrabold text-[#1f2329] tracking-tight leading-tight">
@@ -69,8 +71,27 @@ export const HomePage: React.FC<HomePageProps> = ({ settings }) => {
             )}
           </div>
 
+          {/* VIP Passcode Activation Banner / Button */}
+          <div className="mt-7 flex justify-center">
+            {isVip ? (
+              <div className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-xl text-xs font-semibold shadow-xs">
+                <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                <span>您已成功激活 VIP 专享权限，点击任意文档即可畅读</span>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setShowPasscodeModal(true)}
+                className="inline-flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white rounded-xl text-xs sm:text-sm font-semibold shadow-sm hover:shadow-md transition-all active:scale-98"
+              >
+                <KeyRound className="w-4 h-4" />
+                <span>已有专属卡密？点击此处输入密码解锁</span>
+              </button>
+            )}
+          </div>
+
           {/* Search Box */}
-          <div className="mt-8 max-w-lg mx-auto relative">
+          <div className="mt-6 max-w-lg mx-auto relative">
             <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-gray-400">
               <Search className="w-4 h-4" />
             </div>
@@ -191,6 +212,16 @@ export const HomePage: React.FC<HomePageProps> = ({ settings }) => {
         )}
 
       </main>
+
+      {/* Passcode Activation Modal */}
+      <PasscodeActivationModal
+        isOpen={showPasscodeModal}
+        onClose={() => setShowPasscodeModal(false)}
+        settings={settings}
+        onSuccess={() => {
+          setIsVip(true)
+        }}
+      />
 
     </div>
   )

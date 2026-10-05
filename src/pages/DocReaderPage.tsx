@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react'
 import { useParams, useSearchParams, Link, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Share2, Clock, Eye, Sparkles, Check, Lock, ShieldCheck, Printer } from 'lucide-react'
+import { ArrowLeft, Share2, Clock, Eye, Sparkles, Check, Lock, ShieldCheck, Printer, KeyRound } from 'lucide-react'
 import { api, getVipToken } from '../api'
 import { Doc, SiteSettings } from '../types'
 import { DocumentTOC } from '../components/DocumentTOC'
 import { PaywallModal } from '../components/PaywallModal'
+import { PasscodeActivationModal } from '../components/PasscodeActivationModal'
 
 interface DocReaderPageProps {
   settings?: SiteSettings | null
@@ -20,6 +21,8 @@ export const DocReaderPage: React.FC<DocReaderPageProps> = ({ settings }) => {
   const [loading, setLoading] = useState(true)
   const [errorMsg, setErrorMsg] = useState('')
   const [shareCopied, setShareCopied] = useState(false)
+  const [showPasscodeModal, setShowPasscodeModal] = useState(false)
+  const [isVip, setIsVip] = useState(false)
 
   const loadDocument = async () => {
     if (!id) return
@@ -28,6 +31,7 @@ export const DocReaderPage: React.FC<DocReaderPageProps> = ({ settings }) => {
     try {
       const data = await api.getDoc(id, keyParam)
       setDoc(data)
+      setIsVip(!!getVipToken() || !!data.isAuthorized)
     } catch (err: any) {
       setErrorMsg(err.message || '加载文档失败')
     } finally {
@@ -118,11 +122,20 @@ export const DocReaderPage: React.FC<DocReaderPageProps> = ({ settings }) => {
           </Link>
 
           <div className="flex items-center gap-2">
-            {doc?.userLabel && (
+            {doc?.userLabel ? (
               <div className="hidden sm:flex items-center gap-1 text-xs text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
-                <ShieldCheck className="w-3.5 h-3.5" />
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
                 <span>授权学员: {doc.userLabel}</span>
               </div>
+            ) : (
+              <button
+                onClick={() => setShowPasscodeModal(true)}
+                className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 rounded-lg border border-amber-200 transition-colors"
+                title="输入卡密"
+              >
+                <KeyRound className="w-3 h-3 text-amber-600" />
+                <span>输入卡密</span>
+              </button>
             )}
 
             <button
@@ -220,6 +233,16 @@ export const DocReaderPage: React.FC<DocReaderPageProps> = ({ settings }) => {
         <DocumentTOC contentHtml={doc?.content_html} />
 
       </div>
+
+      {/* Passcode Modal */}
+      <PasscodeActivationModal
+        isOpen={showPasscodeModal}
+        onClose={() => setShowPasscodeModal(false)}
+        settings={settings}
+        onSuccess={() => {
+          loadDocument()
+        }}
+      />
 
     </div>
   )
