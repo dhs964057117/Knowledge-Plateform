@@ -5,4 +5,4 @@ pages_build_output_dir = "dist"
 [[d1_databases]]
 binding = "DB"
 database_name = "knowledge-db"
-database_id = "knowledge-db-id" # 部署前替换为您在 Cloudflare 控制台创建的 D1 数据库 ID
+database_id = "05eb5cd0-e10f-4c68-9316-db0128e718c7" # 部署前替换为您在 Cloudflare 控制台创建的 D1 数据库 ID
