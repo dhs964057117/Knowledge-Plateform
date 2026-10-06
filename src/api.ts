@@ -260,4 +260,12 @@ export const api = {
       body: formData,
     })
   },
+
+  // Proxy external image to permanent base64
+  async proxyImage(url: string): Promise<{ success: boolean; dataUrl: string }> {
+    return await request('/api/proxy-image', {
+      method: 'POST',
+      body: JSON.stringify({ url }),
+    })
+  },
 }

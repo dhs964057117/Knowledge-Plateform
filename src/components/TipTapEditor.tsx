@@ -16,7 +16,8 @@ import {
   Bold, Italic, Underline as UnderlineIcon, Strikethrough,
   Heading1, Heading2, Heading3, List, ListOrdered, CheckSquare,
   Quote, Code, ImageIcon, Link as LinkIcon, Undo, Redo,
-  Table as TableIcon, Minus, Sparkles, Upload, Loader2
+  Table as TableIcon, Minus, Sparkles, Upload, Loader2,
+  RefreshCw, AlertTriangle, CheckCircle2
 } from 'lucide-react'
 import { api } from '../api'
 
@@ -64,7 +65,6 @@ async function processAndCompressImage(file: File): Promise<string> {
         ctx.drawImage(img, 0, 0, width, height)
 
         const isPng = file.type === 'image/png'
-        // If PNG, keep png format; otherwise high-quality jpeg
         const compressedDataUrl = canvas.toDataURL(isPng ? 'image/png' : 'image/jpeg', 0.88)
         resolve(compressedDataUrl)
       }
@@ -92,10 +92,12 @@ async function blobUrlToDataUrl(blobUrl: string): Promise<string> {
 export const TipTapEditor: React.FC<TipTapEditorProps> = ({
   initialContent = '',
   onChange,
-  placeholder = '从这里开始撰写正文，支持直接截图粘贴 (Ctrl+V)、拖拽图片、图文排版...'
+  placeholder = '从这里开始撰写正文，支持截图粘贴 (Ctrl+V)、复制飞书文档、拖拽图片、图文排版...'
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [isProcessingImage, setIsProcessingImage] = useState(false)
+  const [processStatusText, setProcessStatusText] = useState('')
+  const [externalImageCount, setExternalImageCount] = useState(0)
 
   const editor = useEditor({
     extensions: [
@@ -131,12 +133,13 @@ export const TipTapEditor: React.FC<TipTapEditorProps> = ({
     content: initialContent,
     onUpdate: ({ editor }) => {
       onChange(editor.getHTML(), editor.getJSON())
+      checkExternalImages(editor)
     },
     editorProps: {
       attributes: {
         class: 'feishu-prose min-h-[500px] px-8 py-6 focus:outline-none bg-white rounded-b-xl',
       },
-      // 1. Handle pasting images from clipboard (Screenshots, Copied files, Snipping Tool)
+      // 1. Handle pasting images from clipboard (Screenshots, Copied files)
       handlePaste: (view, event) => {
         const items = event.clipboardData?.items
         if (items && items.length > 0) {
@@ -147,6 +150,7 @@ export const TipTapEditor: React.FC<TipTapEditorProps> = ({
               if (file) {
                 event.preventDefault()
                 setIsProcessingImage(true)
+                setProcessStatusText('正在处理粘贴的截图/图片...')
                 processAndCompressImage(file)
                   .then((dataUrl) => {
                     if (dataUrl && view.state) {
@@ -157,34 +161,29 @@ export const TipTapEditor: React.FC<TipTapEditorProps> = ({
                     }
                   })
                   .catch((err) => console.error('Pasted image failed:', err))
-                  .finally(() => setIsProcessingImage(false))
+                  .finally(() => {
+                    setIsProcessingImage(false)
+                    setProcessStatusText('')
+                  })
                 return true
               }
             }
           }
         }
 
-        // Check if pasted HTML contains blob: URLs (e.g. from Word or local memory)
+        // 2. Check if pasted HTML contains external images (e.g. from Feishu Docs, Notion, etc.)
         const html = event.clipboardData?.getData('text/html')
-        if (html && html.includes('src="blob:')) {
-          // Let default paste happen, then scan and replace any blob: images
-          setTimeout(async () => {
-            const docElement = view.dom
-            const blobImgs = docElement.querySelectorAll('img[src^="blob:"]')
-            for (let j = 0; j < blobImgs.length; j++) {
-              const imgEl = blobImgs[j] as HTMLImageElement
-              const converted = await blobUrlToDataUrl(imgEl.src)
-              if (converted.startsWith('data:')) {
-                imgEl.src = converted
-              }
-            }
-          }, 50)
+        if (html && (html.includes('<img') || html.includes('feishu.cn') || html.includes('blob:'))) {
+          // Let default paste happen so the document structure is inserted
+          setTimeout(() => {
+            convertAllExternalImages()
+          }, 150)
         }
 
         return false
       },
 
-      // 2. Handle dragging and dropping images into editor
+      // 3. Handle dragging and dropping images into editor
       handleDrop: (view, event, slice, moved) => {
         if (!moved && event.dataTransfer?.files?.length) {
           const files = Array.from(event.dataTransfer.files)
@@ -192,6 +191,7 @@ export const TipTapEditor: React.FC<TipTapEditorProps> = ({
           if (imageFiles.length > 0) {
             event.preventDefault()
             setIsProcessingImage(true)
+            setProcessStatusText('正在处理拖拽的图片...')
             Promise.all(imageFiles.map((f) => processAndCompressImage(f)))
               .then((dataUrls) => {
                 dataUrls.forEach((dataUrl) => {
@@ -204,7 +204,10 @@ export const TipTapEditor: React.FC<TipTapEditorProps> = ({
                 })
               })
               .catch((err) => console.error('Dropped image failed:', err))
-              .finally(() => setIsProcessingImage(false))
+              .finally(() => {
+                setIsProcessingImage(false)
+                setProcessStatusText('')
+              })
             return true
           }
         }
@@ -213,11 +216,95 @@ export const TipTapEditor: React.FC<TipTapEditorProps> = ({
     },
   })
 
+  // Check how many external (non-data: Base64) images exist in document
+  const checkExternalImages = (ed: any) => {
+    if (!ed || ed.isDestroyed) return
+    let count = 0
+    ed.state.doc.descendants((node: any) => {
+      if (node.type.name === 'image') {
+        const src = node.attrs.src
+        if (src && !src.startsWith('data:') && (src.startsWith('http://') || src.startsWith('https://') || src.startsWith('blob:'))) {
+          count++
+        }
+      }
+    })
+    setExternalImageCount(count)
+  }
+
+  // Convert all external images (especially Feishu temporary tokens) into permanent local Base64
+  const convertAllExternalImages = async () => {
+    if (!editor || editor.isDestroyed) return
+    const imagesToConvert: { src: string }[] = []
+
+    editor.state.doc.descendants((node) => {
+      if (node.type.name === 'image') {
+        const src = node.attrs.src
+        if (src && !src.startsWith('data:') && (src.startsWith('http://') || src.startsWith('https://') || src.startsWith('blob:'))) {
+          if (!imagesToConvert.some(item => item.src === src)) {
+            imagesToConvert.push({ src })
+          }
+        }
+      }
+    })
+
+    if (imagesToConvert.length === 0) return
+
+    setIsProcessingImage(true)
+    setProcessStatusText(`检测到 ${imagesToConvert.length} 张外链/飞书图片，正在转存为永久图片...`)
+
+    let successCount = 0
+    let expiredCount = 0
+
+    for (let i = 0; i < imagesToConvert.length; i++) {
+      const item = imagesToConvert[i]
+      setProcessStatusText(`正在转存第 ${i + 1}/${imagesToConvert.length} 张图片...`)
+      try {
+        let permanentDataUrl = ''
+        if (item.src.startsWith('blob:')) {
+          permanentDataUrl = await blobUrlToDataUrl(item.src)
+        } else {
+          const res = await api.proxyImage(item.src)
+          if (res.success && res.dataUrl) {
+            permanentDataUrl = res.dataUrl
+          }
+        }
+
+        if (permanentDataUrl && permanentDataUrl.startsWith('data:')) {
+          // Replace all occurrences of this src in the document
+          editor.state.doc.descendants((node, pos) => {
+            if (node.type.name === 'image' && node.attrs.src === item.src) {
+              editor.commands.command(({ tr }) => {
+                tr.setNodeMarkup(pos, undefined, { ...node.attrs, src: permanentDataUrl })
+                return true
+              })
+            }
+          })
+          successCount++
+        } else {
+          expiredCount++
+        }
+      } catch (err) {
+        console.warn('Failed to convert image:', item.src, err)
+        expiredCount++
+      }
+    }
+
+    setIsProcessingImage(false)
+    setProcessStatusText('')
+    checkExternalImages(editor)
+    onChange(editor.getHTML(), editor.getJSON())
+
+    if (expiredCount > 0) {
+      alert(`已转存 ${successCount} 张图片！\n另有 ${expiredCount} 张图片因原飞书/第三方链接已过期（失效）无法拉取，建议在飞书中重新全选复制该段内容重新粘贴，系统将立即自动捕获最新有效图片！`)
+    }
+  }
+
   // Synchronize initial content when document data loads
   useEffect(() => {
     if (editor && initialContent && !editor.isDestroyed) {
       if (editor.getHTML() !== initialContent && editor.isEmpty) {
         editor.commands.setContent(initialContent)
+        checkExternalImages(editor)
       }
     }
   }, [initialContent, editor])
@@ -230,6 +317,7 @@ export const TipTapEditor: React.FC<TipTapEditorProps> = ({
     const url = window.prompt('请输入图片网络地址 (URL):')
     if (url) {
       editor.chain().focus().setImage({ src: url }).run()
+      setTimeout(() => convertAllExternalImages(), 200)
     }
   }
 
@@ -237,6 +325,7 @@ export const TipTapEditor: React.FC<TipTapEditorProps> = ({
     const file = e.target.files?.[0]
     if (!file) return
     setIsProcessingImage(true)
+    setProcessStatusText('正在上传并优化图片...')
     try {
       const dataUrl = await processAndCompressImage(file)
       if (dataUrl) {
@@ -246,6 +335,7 @@ export const TipTapEditor: React.FC<TipTapEditorProps> = ({
       alert('上传图片失败: ' + err.message)
     } finally {
       setIsProcessingImage(false)
+      setProcessStatusText('')
       if (fileInputRef.current) fileInputRef.current.value = ''
     }
   }
@@ -268,11 +358,35 @@ export const TipTapEditor: React.FC<TipTapEditorProps> = ({
 
   return (
     <div className="border border-[#dee0e3] rounded-xl overflow-hidden shadow-sm bg-white transition-all relative">
-      {/* Processing indicator */}
+      
+      {/* Processing Status Banner */}
       {isProcessingImage && (
-        <div className="absolute top-2 right-4 z-20 flex items-center gap-1.5 px-3 py-1 bg-feishu-50 text-feishu-600 border border-feishu-200 rounded-full text-xs font-medium shadow-sm animate-pulse">
-          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-          <span>正在处理并插入图片...</span>
+        <div className="bg-feishu-50 border-b border-feishu-200 px-4 py-2 flex items-center justify-between text-xs text-feishu-700 animate-pulse">
+          <div className="flex items-center gap-2 font-medium">
+            <Loader2 className="w-4 h-4 animate-spin text-feishu-600" />
+            <span>{processStatusText || '正在处理图片...'}</span>
+          </div>
+          <span className="text-[11px] text-feishu-500">处理后将自动保存为永久本地数据</span>
+        </div>
+      )}
+
+      {/* External Images Warning Banner */}
+      {externalImageCount > 0 && !isProcessingImage && (
+        <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 flex items-center justify-between text-xs text-amber-800">
+          <div className="flex items-center gap-2 font-medium">
+            <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+            <span>
+              检测到当前文档包含 <strong>{externalImageCount} 张飞书/外链临时图片</strong>（飞书图片1小时后会失效）
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={convertAllExternalImages}
+            className="flex items-center gap-1 px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-semibold shadow-xs transition-colors"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span>一键转存为永久图片</span>
+          </button>
         </div>
       )}
 
@@ -489,6 +603,21 @@ export const TipTapEditor: React.FC<TipTapEditorProps> = ({
             <Upload className="w-3.5 h-3.5" />
             <span>上传图片</span>
           </button>
+
+          {/* Convert External Images Button */}
+          {externalImageCount > 0 && (
+            <button
+              type="button"
+              onClick={convertAllExternalImages}
+              disabled={isProcessingImage}
+              className="flex items-center gap-1 px-2 py-1 text-xs font-medium rounded text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 transition-colors"
+              title="一键转存飞书/外链临时图片为永久本地图片"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isProcessingImage ? 'animate-spin' : ''}`} />
+              <span>转存图片 ({externalImageCount})</span>
+            </button>
+          )}
+
           <button
             type="button"
             onClick={() => editor.chain().focus().setHorizontalRule().run()}

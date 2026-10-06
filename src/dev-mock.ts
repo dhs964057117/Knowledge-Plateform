@@ -501,6 +501,32 @@ export function setupDevApiMiddleware() {
             })
           }
 
+          // POST /api/proxy-image
+          if (pathname === '/api/proxy-image' && method === 'POST') {
+            const body = await parseBody()
+            const { url } = body
+            if (!url) return sendJson(400, { error: '请提供图片 URL' })
+
+            try {
+              const fetchRes = await fetch(url, {
+                headers: {
+                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                  'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8'
+                }
+              })
+              if (!fetchRes.ok) {
+                return sendJson(400, { error: `拉取失败: ${fetchRes.status}` })
+              }
+              const contentType = fetchRes.headers.get('content-type') || 'image/jpeg'
+              const arrayBuffer = await fetchRes.arrayBuffer()
+              const base64 = Buffer.from(arrayBuffer).toString('base64')
+              const dataUrl = `data:${contentType};base64,${base64}`
+              return sendJson(200, { success: true, dataUrl })
+            } catch (e: any) {
+              return sendJson(500, { error: e.message || '转存失败' })
+            }
+          }
+
           // Fallthrough
           return sendJson(404, { error: 'API route not found' })
         } catch (err: any) {

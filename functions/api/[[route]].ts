@@ -510,5 +510,41 @@ app.post('/upload', requireAdmin, async (c) => {
   }
 })
 
+// Proxy external image (e.g. from Feishu, Notion, WeChat) into permanent Base64
+app.post('/proxy-image', requireAdmin, async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}))
+    const { url } = body
+    if (!url || typeof url !== 'string') {
+      return c.json({ error: '请提供图片 URL' }, 400)
+    }
+
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8'
+      }
+    })
+
+    if (!res.ok) {
+      return c.json({ error: `无法获取该图片，状态码: ${res.status}` }, 400)
+    }
+
+    const contentType = res.headers.get('content-type') || 'image/jpeg'
+    const arrayBuffer = await res.arrayBuffer()
+    const bytes = new Uint8Array(arrayBuffer)
+    let binary = ''
+    for (let i = 0; i < bytes.byteLength; i++) {
+      binary += String.fromCharCode(bytes[i])
+    }
+    const base64 = btoa(binary)
+    const dataUrl = `data:${contentType};base64,${base64}`
+
+    return c.json({ success: true, dataUrl })
+  } catch (err: any) {
+    return c.json({ error: err.message || '转存图片失败' }, 500)
+  }
+})
+
 export const onRequest = handle(app)
 export default app
