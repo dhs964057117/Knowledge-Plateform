@@ -10,3 +10,9 @@ not_found_handling = "single-page-application"
 binding = "DB"
 database_name = "knowledge-db"
 database_id = "05eb5cd0-e10f-4c68-9316-db0128e718c7"
+
+# Cloudflare R2 对象存储图床绑定（拥有 10 GB 免费额度，0 出网流量费）
+# 在 Cloudflare 控制台创建名为 knowledge-images 的存储桶后，可取消以下注释开启或直接在控制台绑定：
+# [[r2_buckets]]
+# binding = "R2"
+# bucket_name = "knowledge-images"

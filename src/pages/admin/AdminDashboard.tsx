@@ -4,14 +4,16 @@ import {
   FileText, Key, Settings as SettingsIcon, Plus, Search, Edit3,
   Trash2, Copy, Check, ExternalLink, ShieldCheck, Eye, Lock,
   RefreshCw, Power, Sparkles, AlertCircle, Save, CheckCircle2,
-  Calendar, UserCheck, Share2, HelpCircle
+  Calendar, UserCheck, Share2, HelpCircle, HardDrive, Database,
+  ZoomIn, Upload, X, ArrowUpRight, CheckSquare, Square
 } from 'lucide-react'
 import { api, getAdminToken } from '../../api'
-import { Doc, AccessCode, SiteSettings, DashboardStats } from '../../types'
+import { Doc, AccessCode, SiteSettings, DashboardStats, StorageStats, MediaAsset } from '../../types'
+import { formatBytes } from '../../components/TipTapEditor'
 
 export const AdminDashboard: React.FC = () => {
   const navigate = useNavigate()
-  const [activeTab, setActiveTab] = useState<'docs' | 'passcodes' | 'settings' | 'stats'>('docs')
+  const [activeTab, setActiveTab] = useState<'docs' | 'passcodes' | 'settings' | 'stats' | 'media'>('docs')
 
   // Data states
   const [docs, setDocs] = useState<Doc[]>([])
@@ -26,7 +28,15 @@ export const AdminDashboard: React.FC = () => {
     admin_password: '',
   })
   const [stats, setStats] = useState<DashboardStats | null>(null)
+  const [storageStats, setStorageStats] = useState<StorageStats | null>(null)
   const [loading, setLoading] = useState(true)
+
+  // Media states
+  const [selectedMediaKeys, setSelectedMediaKeys] = useState<string[]>([])
+  const [mediaSearch, setMediaSearch] = useState('')
+  const [previewMediaUrl, setPreviewMediaUrl] = useState<string | null>(null)
+  const [uploadingMedia, setUploadingMedia] = useState(false)
+  const mediaInputRef = React.useRef<HTMLInputElement>(null)
 
   // Modals & form states
   const [showCodeModal, setShowCodeModal] = useState(false)
@@ -68,6 +78,7 @@ export const AdminDashboard: React.FC = () => {
       setPasscodes(codesData)
       setSettings(settingsData)
       setStats(statsData)
+      loadStorageData().catch(() => null)
     } catch (err: any) {
       console.error('Failed to load admin data:', err)
       if (err.message?.includes('401') || err.message?.includes('Unauthorized')) {
@@ -76,6 +87,54 @@ export const AdminDashboard: React.FC = () => {
       }
     } finally {
       setLoading(false)
+    }
+  }
+
+  const loadStorageData = async () => {
+    try {
+      const res = await api.getStorageStats()
+      setStorageStats(res)
+    } catch (e) {
+      console.warn('Failed to load storage stats:', e)
+    }
+  }
+
+  const handleDeleteMedia = async (key: string) => {
+    if (!window.confirm('确定要删除此图片吗？删除后将彻底释放云端存储空间。注意：若有文档引用了该图片，删除后该图片将无法加载。')) return
+    try {
+      await api.deleteMediaAsset(key)
+      await loadStorageData()
+      setSelectedMediaKeys(selectedMediaKeys.filter(k => k !== key))
+    } catch (err: any) {
+      alert('删除图片失败: ' + err.message)
+    }
+  }
+
+  const handleBatchDeleteMedia = async () => {
+    if (selectedMediaKeys.length === 0) return
+    if (!window.confirm(`确定要批量删除选中的 ${selectedMediaKeys.length} 张图片并彻底释放存储空间吗？此操作无法撤销。`)) return
+    try {
+      await api.deleteMediaBatch(selectedMediaKeys)
+      setSelectedMediaKeys([])
+      await loadStorageData()
+    } catch (err: any) {
+      alert('批量删除失败: ' + err.message)
+    }
+  }
+
+  const handleUploadMedia = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setUploadingMedia(true)
+    try {
+      await api.uploadImage(file)
+      await loadStorageData()
+      alert('图片已成功上传并转存！')
+    } catch (err: any) {
+      alert('上传失败: ' + err.message)
+    } finally {
+      setUploadingMedia(false)
+      if (mediaInputRef.current) mediaInputRef.current.value = ''
     }
   }
 
@@ -290,6 +349,21 @@ export const AdminDashboard: React.FC = () => {
           >
             <SettingsIcon className="w-4 h-4" />
             <span>专栏与付费设置</span>
+          </button>
+
+          <button
+            onClick={() => {
+              setActiveTab('media')
+              loadStorageData()
+            }}
+            className={`pb-3 text-sm font-semibold flex items-center gap-2 border-b-2 transition-colors ${
+              activeTab === 'media'
+                ? 'border-feishu-600 text-feishu-600'
+                : 'border-transparent text-[#646a73] hover:text-[#1f2329]'
+            }`}
+          >
+            <HardDrive className="w-4 h-4" />
+            <span>图床与存储管理 ({storageStats ? `${storageStats.totalCount}图` : '管理'})</span>
           </button>
 
           {stats && (
@@ -800,6 +874,315 @@ export const AdminDashboard: React.FC = () => {
               <div className="text-2xl font-extrabold text-[#1f2329] mt-2">{stats.totalUsage}</div>
               <div className="text-xs text-purple-600 mt-1">学员累计解锁次数</div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Tab 5: Media & Storage Management */}
+      {activeTab === 'media' && (
+        <div className="max-w-7xl mx-auto px-4 sm:px-8 mt-6">
+          
+          {/* Storage Engine Status Banner */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            
+            {/* Engine Card */}
+            <div className="bg-white p-5 rounded-2xl border border-[#dee0e3] shadow-card">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-[#8f959e] uppercase">当前图床引擎</span>
+                <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${
+                  storageStats?.engine === 'r2'
+                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                    : 'bg-blue-50 text-blue-700 border border-blue-200'
+                }`}>
+                  {storageStats?.engine === 'r2' ? '⚡ Cloudflare R2 对象存储' : '💾 Cloudflare D1 数据库'}
+                </span>
+              </div>
+              <div className="text-lg font-bold text-[#1f2329] mt-2 flex items-center gap-2">
+                <HardDrive className="w-5 h-5 text-feishu-600" />
+                <span>{storageStats?.engine === 'r2' ? 'R2 独立对象存储' : 'D1 内联图片存储'}</span>
+              </div>
+              <p className="text-xs text-[#8f959e] mt-1">
+                {storageStats?.engine === 'r2'
+                  ? '已接入专用图床桶 knowledge-images，免出网流量费'
+                  : '图片已自动执行智能 WebP 压缩，可随时开启 R2 升级'}
+              </p>
+            </div>
+
+            {/* Storage Usage Card */}
+            <div className="bg-white p-5 rounded-2xl border border-[#dee0e3] shadow-card">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-[#8f959e] uppercase">存储占用与配额</span>
+                <span className="text-xs font-mono font-medium text-gray-700">
+                  {formatBytes(storageStats?.totalBytes || 0)} / {formatBytes(storageStats?.freeQuotaBytes || 5 * 1024 * 1024 * 1024)}
+                </span>
+              </div>
+              <div className="mt-3">
+                <div className="w-full bg-gray-100 rounded-full h-2 overflow-hidden">
+                  <div
+                    className="bg-feishu-600 h-2 rounded-full transition-all duration-500"
+                    style={{
+                      width: `${Math.max(
+                        1,
+                        Math.min(
+                          100,
+                          ((storageStats?.totalBytes || 0) / (storageStats?.freeQuotaBytes || 5 * 1024 * 1024 * 1024)) * 100
+                        )
+                      )}%`
+                    }}
+                  />
+                </div>
+              </div>
+              <div className="text-xs text-emerald-600 mt-2 flex items-center justify-between">
+                <span>配额状态健康 (免费额度充足)</span>
+                <span>
+                  {(((storageStats?.totalBytes || 0) / (storageStats?.freeQuotaBytes || 5 * 1024 * 1024 * 1024)) * 100).toFixed(2)}%
+                </span>
+              </div>
+            </div>
+
+            {/* Images Count Card */}
+            <div className="bg-white p-5 rounded-2xl border border-[#dee0e3] shadow-card">
+              <div className="text-xs font-semibold text-[#8f959e] uppercase">已索引图片总数</div>
+              <div className="text-2xl font-extrabold text-[#1f2329] mt-2 flex items-center gap-2">
+                <span>{storageStats?.totalCount || 0}</span>
+                <span className="text-xs font-normal text-gray-500">张图片</span>
+              </div>
+              <div className="text-xs text-blue-600 mt-1 flex items-center gap-1">
+                <CheckCircle2 className="w-3.5 h-3.5 text-blue-500" />
+                <span>智能压缩已节省约 85% 存储空间</span>
+              </div>
+            </div>
+
+          </div>
+
+          {/* R2 Guidance Banner (If not using R2 yet) */}
+          {!storageStats?.r2Configured && (
+            <div className="mb-6 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200/80 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-blue-900">
+              <div className="flex items-start gap-3">
+                <div className="w-8 h-8 rounded-xl bg-blue-600 text-white flex items-center justify-center flex-shrink-0 font-bold mt-0.5">
+                  R2
+                </div>
+                <div>
+                  <h4 className="font-bold text-sm text-blue-950">升级为 Cloudflare R2 独立对象存储（免费 10 GB）</h4>
+                  <p className="text-blue-700 mt-0.5">
+                    目前平台正在使用 D1 存储并自动将图片压缩为 WebP。若需完全独立的对象存储，只需在 Cloudflare 仪表盘「R2」中新建名为 <strong>knowledge-images</strong> 的存储桶即可自动无缝激活！
+                  </p>
+                </div>
+              </div>
+              <a
+                href="https://dash.cloudflare.com"
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium shadow-xs transition-colors whitespace-nowrap self-end sm:self-auto"
+              >
+                <span>前往 Cloudflare 仪表盘</span>
+                <ArrowUpRight className="w-3.5 h-3.5" />
+              </a>
+            </div>
+          )}
+
+          {/* Media Toolbar */}
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3 flex-1 max-w-md">
+              <div className="relative w-full">
+                <Search className="w-4 h-4 text-gray-400 absolute left-3.5 top-3" />
+                <input
+                  type="text"
+                  value={mediaSearch}
+                  onChange={(e) => setMediaSearch(e.target.value)}
+                  placeholder="搜索图片标识或名称..."
+                  className="w-full pl-9 pr-4 py-2 bg-white border border-[#dee0e3] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-feishu-500 shadow-xs"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {/* Hidden Upload Input */}
+              <input
+                type="file"
+                ref={mediaInputRef}
+                onChange={handleUploadMedia}
+                accept="image/*"
+                className="hidden"
+              />
+
+              {/* Batch Delete */}
+              {selectedMediaKeys.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleBatchDeleteMedia}
+                  className="flex items-center gap-1 px-3.5 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-sm font-medium shadow-xs transition-colors animate-in fade-in"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  <span>批量删除 ({selectedMediaKeys.length}) 释放空间</span>
+                </button>
+              )}
+
+              {/* Upload to Media Library */}
+              <button
+                type="button"
+                onClick={() => mediaInputRef.current?.click()}
+                disabled={uploadingMedia}
+                className="flex items-center gap-1.5 px-3.5 py-2 bg-feishu-600 hover:bg-feishu-700 text-white rounded-xl text-sm font-medium shadow-xs transition-colors disabled:opacity-50"
+              >
+                {uploadingMedia ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+                <span>上传图片至图床</span>
+              </button>
+
+              {/* Refresh */}
+              <button
+                type="button"
+                onClick={loadStorageData}
+                className="p-2 bg-white hover:bg-gray-50 text-gray-600 border border-gray-200 rounded-xl shadow-xs transition-colors"
+                title="刷新图片列表"
+              >
+                <RefreshCw className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+
+          {/* Media Grid */}
+          <div className="bg-white rounded-2xl border border-[#dee0e3] shadow-card p-6">
+            {(!storageStats?.objects || storageStats.objects.length === 0) ? (
+              <div className="py-16 text-center text-gray-400">
+                <HardDrive className="w-12 h-12 mx-auto text-gray-300 mb-2 stroke-[1.5]" />
+                <p className="text-sm font-medium text-gray-600">图床与存储库中暂无独立图片</p>
+                <p className="text-xs text-gray-400 mt-1">
+                  在编写文档时上传或转存的配图会自动记录在此处，您也可以点击右上角【上传图片至图床】进行存储。
+                </p>
+              </div>
+            ) : (
+              <div>
+                {/* Select All Bar */}
+                <div className="pb-4 mb-4 border-b border-gray-100 flex items-center justify-between text-xs text-gray-500">
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const allKeys = (storageStats?.objects || []).map(o => o.key)
+                        if (selectedMediaKeys.length === allKeys.length) {
+                          setSelectedMediaKeys([])
+                        } else {
+                          setSelectedMediaKeys(allKeys)
+                        }
+                      }}
+                      className="flex items-center gap-1.5 text-gray-700 hover:text-feishu-600 font-medium"
+                    >
+                      {selectedMediaKeys.length === (storageStats?.objects || []).length ? (
+                        <CheckSquare className="w-4 h-4 text-feishu-600" />
+                      ) : (
+                        <Square className="w-4 h-4 text-gray-400" />
+                      )}
+                      <span>全选本页所有图片 ({storageStats.objects.length})</span>
+                    </button>
+                  </div>
+                  <span>💡 提示：点击每张图片右上角的垃圾桶即可彻底删除该图并即时释放云端存储</span>
+                </div>
+
+                {/* Grid of Images */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+                  {(storageStats.objects || [])
+                    .filter(obj => !mediaSearch || obj.key.toLowerCase().includes(mediaSearch.toLowerCase()))
+                    .map((item) => {
+                      const isSelected = selectedMediaKeys.includes(item.key)
+                      return (
+                        <div
+                          key={item.key}
+                          className={`relative group rounded-xl border overflow-hidden bg-white transition-all flex flex-col ${
+                            isSelected
+                              ? 'border-feishu-500 ring-2 ring-feishu-500/20 shadow-sm'
+                              : 'border-gray-200 hover:border-gray-300 hover:shadow-md'
+                          }`}
+                        >
+                          {/* Image Box */}
+                          <div className="relative aspect-square bg-gray-50 overflow-hidden cursor-pointer">
+                            <img
+                              src={item.url}
+                              alt={item.key}
+                              className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+                              onClick={() => setPreviewMediaUrl(item.url)}
+                            />
+
+                            {/* Checkbox Overlay */}
+                            <div
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                if (isSelected) {
+                                  setSelectedMediaKeys(selectedMediaKeys.filter(k => k !== item.key))
+                                } else {
+                                  setSelectedMediaKeys([...selectedMediaKeys, item.key])
+                                }
+                              }}
+                              className="absolute top-2 left-2 z-10 w-5 h-5 rounded bg-white/90 border border-gray-300 flex items-center justify-center cursor-pointer shadow-xs"
+                            >
+                              {isSelected && <Check className="w-3.5 h-3.5 text-feishu-600 stroke-[3]" />}
+                            </div>
+
+                            {/* Delete Quick Button */}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleDeleteMedia(item.key)
+                              }}
+                              className="absolute top-2 right-2 z-10 w-6 h-6 rounded-lg bg-red-600/90 hover:bg-red-600 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow-sm"
+                              title="删除此图片并释放存储空间"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+
+                          {/* Info Footer */}
+                          <div className="p-2.5 flex-1 flex flex-col justify-between bg-white text-xs">
+                            <div className="truncate font-mono font-medium text-gray-800 text-[11px]" title={item.key}>
+                              {item.key}
+                            </div>
+                            <div className="flex items-center justify-between mt-1 text-[10px] text-gray-400">
+                              <span className="font-semibold text-gray-600">{formatBytes(item.size)}</span>
+                              <button
+                                type="button"
+                                onClick={() => handleCopy(item.url, item.key)}
+                                className="hover:text-feishu-600 transition-colors"
+                                title="复制图片 URL"
+                              >
+                                {copiedId === item.key ? (
+                                  <span className="text-emerald-600 font-bold">已复制</span>
+                                ) : (
+                                  <span>复制链接</span>
+                                )}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })}
+                </div>
+              </div>
+            )}
+          </div>
+
+        </div>
+      )}
+
+      {/* Media Lightbox Zoom Modal */}
+      {previewMediaUrl && (
+        <div
+          onClick={() => setPreviewMediaUrl(null)}
+          className="fixed inset-0 z-60 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 cursor-zoom-out animate-in fade-in"
+        >
+          <div className="relative max-w-5xl max-h-[90vh]">
+            <img
+              src={previewMediaUrl}
+              alt="原图预览"
+              className="max-w-full max-h-[85vh] rounded-lg shadow-2xl object-contain bg-white"
+            />
+            <button
+              type="button"
+              onClick={() => setPreviewMediaUrl(null)}
+              className="absolute top-2 right-2 p-2 rounded-full bg-black/60 text-white hover:bg-black/80 transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
           </div>
         </div>
       )}

@@ -1,4 +1,4 @@
-import { Doc, AccessCode, SiteSettings, DashboardStats } from './types'
+import { Doc, AccessCode, SiteSettings, DashboardStats, StorageStats, MediaAsset } from './types'
 
 const ADMIN_TOKEN_KEY = 'kp_admin_token'
 const GLOBAL_VIP_TOKEN_KEY = 'kp_global_vip_token'
@@ -261,11 +261,29 @@ export const api = {
     })
   },
 
-  // Proxy external image to permanent base64
-  async proxyImage(url: string): Promise<{ success: boolean; dataUrl: string }> {
+  // Proxy external image to permanent base64 or R2
+  async proxyImage(url: string): Promise<{ success: boolean; dataUrl: string; url?: string; storage?: string; key?: string }> {
     return await request('/api/proxy-image', {
       method: 'POST',
       body: JSON.stringify({ url }),
+    })
+  },
+
+  // Media & Storage APIs (Admin)
+  async getStorageStats(): Promise<StorageStats> {
+    return await request<StorageStats>('/api/media/stats')
+  },
+
+  async deleteMediaAsset(key: string): Promise<{ success: boolean; message: string }> {
+    return await request<{ success: boolean; message: string }>(`/api/media/${encodeURIComponent(key)}`, {
+      method: 'DELETE',
+    })
+  },
+
+  async deleteMediaBatch(keys: string[]): Promise<{ success: boolean; deletedCount: number; message: string }> {
+    return await request<{ success: boolean; deletedCount: number; message: string }>('/api/media/delete-batch', {
+      method: 'POST',
+      body: JSON.stringify({ keys }),
     })
   },
 }

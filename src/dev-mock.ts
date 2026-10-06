@@ -521,10 +521,53 @@ export function setupDevApiMiddleware() {
               const arrayBuffer = await fetchRes.arrayBuffer()
               const base64 = Buffer.from(arrayBuffer).toString('base64')
               const dataUrl = `data:${contentType};base64,${base64}`
-              return sendJson(200, { success: true, dataUrl })
+              return sendJson(200, { success: true, dataUrl, url: dataUrl })
             } catch (e: any) {
               return sendJson(500, { error: e.message || '转存失败' })
             }
+          }
+
+          // GET /api/media/stats
+          if (pathname === '/api/media/stats' && method === 'GET') {
+            const db = readDb()
+            let totalBytes = 0
+            const objects: any[] = []
+            // Scan docs for images
+            ;(db.docs || []).forEach((d: any) => {
+              const matches = (d.content_html || '').match(/data:image\/[^;]+;base64,[A-Za-z0-9+/=]+/g) || []
+              matches.forEach((m: string, idx: number) => {
+                const size = Math.round(m.length * 0.75)
+                totalBytes += size
+                objects.push({
+                  key: `doc_${d.id}_img_${idx}`,
+                  url: m,
+                  size,
+                  uploaded: d.updated_at || d.created_at,
+                  contentType: m.split(';')[0].replace('data:', '')
+                })
+              })
+            })
+
+            return sendJson(200, {
+              engine: 'd1',
+              r2Configured: false,
+              totalCount: objects.length,
+              totalBytes,
+              freeQuotaBytes: 5 * 1024 * 1024 * 1024,
+              objects
+            })
+          }
+
+          // DELETE /api/media/:key
+          if (pathname.startsWith('/api/media/') && method === 'DELETE') {
+            return sendJson(200, { success: true, message: '图片已成功删除，存储空间已释放' })
+          }
+
+          // POST /api/media/delete-batch
+          if (pathname === '/api/media/delete-batch' && method === 'POST') {
+            const body = await parseBody()
+            const count = (body.keys || []).length
+            return sendJson(200, { success: true, deletedCount: count, message: `已成功删除 ${count} 张图片，存储资源已释放` })
           }
 
           // Fallthrough

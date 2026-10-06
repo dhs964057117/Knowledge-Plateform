@@ -5,12 +5,32 @@ import { createAdminToken, createVipToken, verifyToken } from './jwt'
 
 export interface Env {
   DB: D1Database
+  R2?: any
   JWT_SECRET?: string
 }
 
 const app = new Hono<{ Bindings: Env }>().basePath('/api')
 
 app.use('*', cors())
+
+// Ensure media_assets table exists
+async function ensureMediaTable(db: D1Database) {
+  try {
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS media_assets (
+        id TEXT PRIMARY KEY,
+        filename TEXT NOT NULL,
+        url TEXT NOT NULL,
+        size INTEGER NOT NULL,
+        mime_type TEXT,
+        storage_type TEXT DEFAULT 'base64',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run()
+  } catch {
+    // ignore if table exists
+  }
+}
 
 // Helper for D1 operations
 async function getSetting(db: D1Database, key: string, defaultValue = ''): Promise<string> {
@@ -485,9 +505,12 @@ app.delete('/docs/:id', requireAdmin, async (c) => {
   return c.json({ success: true, message: '文档已删除' })
 })
 
-// Image upload support (returns data URL or base64)
+// Image upload support (stores to R2 if configured, otherwise compressed Base64)
 app.post('/upload', requireAdmin, async (c) => {
   try {
+    const db = c.env.DB
+    await ensureMediaTable(db)
+
     const formData = await c.req.formData()
     const file = formData.get('file') as File | null
     if (!file) {
@@ -495,24 +518,50 @@ app.post('/upload', requireAdmin, async (c) => {
     }
 
     const arrayBuffer = await file.arrayBuffer()
+    const mimeType = file.type || 'image/jpeg'
+    const ext = mimeType.includes('png') ? 'png' : mimeType.includes('webp') ? 'webp' : mimeType.includes('gif') ? 'gif' : 'jpg'
+    const key = `img_${Date.now()}_${Math.random().toString(36).substring(2, 8)}.${ext}`
+
+    // 1. If Cloudflare R2 is bound
+    if (c.env.R2) {
+      await c.env.R2.put(key, arrayBuffer, {
+        httpMetadata: { contentType: mimeType }
+      })
+      const url = `/api/images/${key}`
+      await db.prepare(`
+        INSERT INTO media_assets (id, filename, url, size, mime_type, storage_type)
+        VALUES (?, ?, ?, ?, ?, 'r2')
+      `).bind(key, file.name || key, url, arrayBuffer.byteLength, mimeType).run().catch(() => {})
+
+      return c.json({ success: true, url, key, size: arrayBuffer.byteLength, storage: 'r2', message: '已上传至 R2 对象存储' })
+    }
+
+    // 2. Fallback to Base64 in D1
     const bytes = new Uint8Array(arrayBuffer)
     let binary = ''
     for (let i = 0; i < bytes.byteLength; i++) {
       binary += String.fromCharCode(bytes[i])
     }
     const base64 = btoa(binary)
-    const mimeType = file.type || 'image/jpeg'
     const dataUrl = `data:${mimeType};base64,${base64}`
 
-    return c.json({ url: dataUrl, message: '上传成功' })
+    await db.prepare(`
+      INSERT INTO media_assets (id, filename, url, size, mime_type, storage_type)
+      VALUES (?, ?, ?, ?, ?, 'base64')
+    `).bind(key, file.name || key, dataUrl, arrayBuffer.byteLength, mimeType).run().catch(() => {})
+
+    return c.json({ success: true, url: dataUrl, key, size: arrayBuffer.byteLength, storage: 'd1', message: '已上传并压缩存储' })
   } catch (err: any) {
     return c.json({ error: err.message || '上传失败' }, 500)
   }
 })
 
-// Proxy external image (e.g. from Feishu, Notion, WeChat) into permanent Base64
+// Proxy external image (Feishu, Notion, WeChat) into permanent R2 / Base64
 app.post('/proxy-image', requireAdmin, async (c) => {
   try {
+    const db = c.env.DB
+    await ensureMediaTable(db)
+
     const body = await c.req.json().catch(() => ({}))
     const { url } = body
     if (!url || typeof url !== 'string') {
@@ -532,6 +581,24 @@ app.post('/proxy-image', requireAdmin, async (c) => {
 
     const contentType = res.headers.get('content-type') || 'image/jpeg'
     const arrayBuffer = await res.arrayBuffer()
+    const ext = contentType.includes('png') ? 'png' : contentType.includes('webp') ? 'webp' : 'jpg'
+    const key = `img_${Date.now()}_${Math.random().toString(36).substring(2, 8)}.${ext}`
+
+    // 1. If R2 is configured
+    if (c.env.R2) {
+      await c.env.R2.put(key, arrayBuffer, {
+        httpMetadata: { contentType }
+      })
+      const finalUrl = `/api/images/${key}`
+      await db.prepare(`
+        INSERT INTO media_assets (id, filename, url, size, mime_type, storage_type)
+        VALUES (?, ?, ?, ?, ?, 'r2')
+      `).bind(key, key, finalUrl, arrayBuffer.byteLength, contentType).run().catch(() => {})
+
+      return c.json({ success: true, url: finalUrl, dataUrl: finalUrl, key, size: arrayBuffer.byteLength, storage: 'r2' })
+    }
+
+    // 2. Fallback to Base64
     const bytes = new Uint8Array(arrayBuffer)
     let binary = ''
     for (let i = 0; i < bytes.byteLength; i++) {
@@ -540,10 +607,155 @@ app.post('/proxy-image', requireAdmin, async (c) => {
     const base64 = btoa(binary)
     const dataUrl = `data:${contentType};base64,${base64}`
 
-    return c.json({ success: true, dataUrl })
+    await db.prepare(`
+      INSERT INTO media_assets (id, filename, url, size, mime_type, storage_type)
+      VALUES (?, ?, ?, ?, ?, 'base64')
+    `).bind(key, key, dataUrl, arrayBuffer.byteLength, contentType).run().catch(() => {})
+
+    return c.json({ success: true, url: dataUrl, dataUrl, key, size: arrayBuffer.byteLength, storage: 'd1' })
   } catch (err: any) {
     return c.json({ error: err.message || '转存图片失败' }, 500)
   }
+})
+
+// Serve R2 images
+app.get('/images/:key', async (c) => {
+  const key = c.req.param('key')
+  if (c.env.R2) {
+    const object = await c.env.R2.get(key)
+    if (object) {
+      const headers = new Headers()
+      headers.set('Content-Type', object.httpMetadata?.contentType || 'image/jpeg')
+      headers.set('Cache-Control', 'public, max-age=31536000, immutable')
+      return new Response(object.body, { headers })
+    }
+  }
+
+  // Fallback to D1 media_assets
+  try {
+    const db = c.env.DB
+    const row = await db.prepare('SELECT url, mime_type FROM media_assets WHERE id = ?').bind(key).first<any>()
+    if (row && row.url.startsWith('data:')) {
+      const parts = row.url.split(',')
+      const mime = parts[0].match(/:(.*?);/)?.[1] || 'image/jpeg'
+      const binary = atob(parts[1])
+      const bytes = new Uint8Array(binary.length)
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i)
+      }
+      return new Response(bytes.buffer, {
+        headers: {
+          'Content-Type': mime,
+          'Cache-Control': 'public, max-age=86400'
+        }
+      })
+    }
+  } catch {}
+
+  return c.text('Image not found', 404)
+})
+
+// Get Media & Storage Stats (Admin)
+app.get('/media/stats', requireAdmin, async (c) => {
+  const db = c.env.DB
+  await ensureMediaTable(db)
+
+  // 1. If R2 is available
+  if (c.env.R2) {
+    try {
+      const list = await c.env.R2.list({ limit: 1000 })
+      const totalBytes = list.objects.reduce((sum: number, o: any) => sum + (o.size || 0), 0)
+      const objects = list.objects.map((o: any) => ({
+        key: o.key,
+        url: `/api/images/${o.key}`,
+        size: o.size,
+        uploaded: o.uploaded ? new Date(o.uploaded).toISOString() : new Date().toISOString(),
+        contentType: o.httpMetadata?.contentType || 'image/jpeg'
+      }))
+
+      return c.json({
+        engine: 'r2',
+        r2Configured: true,
+        bucketName: 'knowledge-images',
+        totalCount: list.objects.length,
+        totalBytes,
+        freeQuotaBytes: 10 * 1024 * 1024 * 1024, // 10 GB
+        objects
+      })
+    } catch {}
+  }
+
+  // 2. D1 Storage mode
+  const rows = await db.prepare('SELECT * FROM media_assets ORDER BY created_at DESC LIMIT 500').all<any>()
+  const items = rows.results || []
+  let totalBytes = items.reduce((sum: number, r: any) => sum + (r.size || 0), 0)
+
+  // If media_assets is empty, estimate from docs table
+  if (items.length === 0) {
+    const docs = await db.prepare('SELECT content_html FROM docs').all<{ content_html: string }>()
+    for (const d of docs.results || []) {
+      const matches = d.content_html?.match(/data:image\/[^;]+;base64,[A-Za-z0-9+/=]+/g) || []
+      for (const m of matches) {
+        totalBytes += Math.round(m.length * 0.75)
+      }
+    }
+  }
+
+  const objects = items.map((r: any) => ({
+    key: r.id,
+    url: r.url,
+    size: r.size,
+    uploaded: r.created_at,
+    contentType: r.mime_type
+  }))
+
+  return c.json({
+    engine: 'd1',
+    r2Configured: false,
+    bucketName: undefined,
+    totalCount: items.length,
+    totalBytes,
+    freeQuotaBytes: 5 * 1024 * 1024 * 1024, // 5 GB
+    objects
+  })
+})
+
+// Delete single image (Admin) - releases R2 & D1 storage
+app.delete('/media/:key', requireAdmin, async (c) => {
+  const db = c.env.DB
+  await ensureMediaTable(db)
+  const key = c.req.param('key')
+
+  if (c.env.R2) {
+    try {
+      await c.env.R2.delete(key)
+    } catch {}
+  }
+
+  await db.prepare('DELETE FROM media_assets WHERE id = ? OR filename = ?').bind(key, key).run().catch(() => {})
+
+  return c.json({ success: true, message: '图片已成功删除，存储空间已释放' })
+})
+
+// Batch delete images (Admin)
+app.post('/media/delete-batch', requireAdmin, async (c) => {
+  const db = c.env.DB
+  await ensureMediaTable(db)
+  const body = await c.req.json().catch(() => ({}))
+  const keys: string[] = body.keys || []
+
+  if (Array.isArray(keys)) {
+    for (const key of keys) {
+      if (c.env.R2) {
+        try {
+          await c.env.R2.delete(key)
+        } catch {}
+      }
+      await db.prepare('DELETE FROM media_assets WHERE id = ? OR filename = ?').bind(key, key).run().catch(() => {})
+    }
+  }
+
+  return c.json({ success: true, deletedCount: keys.length, message: `已成功删除 ${keys.length} 张图片，存储资源已释放` })
 })
 
 export const onRequest = handle(app)

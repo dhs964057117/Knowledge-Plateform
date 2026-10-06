@@ -48,3 +48,21 @@ export interface DashboardStats {
   totalViews: number
   totalUsage: number
 }
+
+export interface MediaAsset {
+  key: string
+  url: string
+  size: number
+  uploaded?: string
+  contentType?: string
+}
+
+export interface StorageStats {
+  engine: 'r2' | 'd1'
+  r2Configured: boolean
+  bucketName?: string
+  totalCount: number
+  totalBytes: number
+  freeQuotaBytes: number
+  objects?: MediaAsset[]
+}
